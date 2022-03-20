@@ -36,6 +36,9 @@ augroup vimwiki
     finish
   endif
   
+  if !exists('g:vimwiki_sync_prefix')
+    let g:vimwiki_sync_prefix = ':silent !git -C '
+  endif
 
   " execute vim function. because vimwiki can be started from any directory,
   " we must use pushd and popd commands to execute git commands in wiki root
@@ -64,36 +67,35 @@ augroup vimwiki
   function! s:pull_changes()
     if g:zettel_synced==0
       echom "[vimwiki sync] pulling changes"
+
       let g:zettel_synced = 1
+      let gitCommand = g:vimwiki_sync_prefix . g:zettel_dir . " pull --rebase origin " . g:vimwiki_sync_branch
+      let gitCallbacks = {"exit_cb": "My_exit_cb", "close_cb": "My_close_cb"}
+
       if has("nvim")
-        let gitjob = jobstart("git -C " . g:zettel_dir . " pull origin " . g:vimwiki_sync_branch, {"exit_cb": "My_exit_cb", "close_cb": "My_close_cb"})
-        if g:sync_taskwarrior==1
-          let taskjob = jobstart("task sync")
-        endif
+        let gitjob = jobstart(gitCommand, gitCallbacks)
       else
-        let gitjob = job_start("git -C " . g:zettel_dir . " pull origin " . g:vimwiki_sync_branch, {"exit_cb": "My_exit_cb", "close_cb": "My_close_cb"})
-        if g:sync_taskwarrior==1
-          let taskjob = job_start("task sync")
-        endif
+        let gitjob = job_start(gitCommand, gitCallbacks)
+      endif
+
+      if g:sync_taskwarrior==1
+        let taskjob = jobstart("task sync")
       endif
     endif
   endfunction
 
-  " push changes
-  " it seems that Vim terminates before it is executed, so it needs to be
-  " fixed
+  function! s:stage_changes()
+    execute g:vimwiki_sync_prefix . g:zettel_dir . " add . "
+  endfunction
+
   function! s:push_changes()
-    if has("nvim")
-      let gitjob = jobstart("git -C " . g:zettel_dir . " push origin " . g:vimwiki_sync_branch)
-      if g:sync_taskwarrior==1
-        let taskjob = jobstart("task sync")
-      endif
-    else
-      let gitjob = job_start("git -C " . g:zettel_dir . " push origin " . g:vimwiki_sync_branch)
-      if g:sync_taskwarrior==1
-        let taskjob = job_start("task sync")
-      endif
+    echom "[vimwiki sync] pushing changes"
+    execute g:vimwiki_sync_prefix . g:zettel_dir . " commit -m \"" . strftime(g:vimwiki_sync_commit_message) . "\""
+    execute g:vimwiki_sync_prefix . g:zettel_dir . " push origin " . g:vimwiki_sync_branch
+    if g:sync_taskwarrior==1
+      let taskjob = jobstart("task sync")
     endif
+    echom "[vimwiki sync] changes pushed"
   endfunction
 
   " sync changes at the start
@@ -101,8 +103,7 @@ augroup vimwiki
   au! BufRead * call <sid>pull_changes()
   au! BufEnter * call <sid>pull_changes()
   " auto commit changes on each file change
-  au! BufWritePost * call <sid>git_action("git -C " . g:zettel_dir . " add . ; git -C " . g:zettel_dir . " commit -m \"" . strftime(g:vimwiki_sync_commit_message) . "\"")
+  au! BufWritePost * call <sid>stage_changes()
   " push changes only on at the end
-  au! VimLeave * call <sid>git_action("git -C " . g:zettel_dir . " push origin " . g:vimwiki_sync_branch)
-  " au! VimLeave * call <sid>push_changes()
+  au! VimLeave * call <sid>push_changes()
 augroup END
